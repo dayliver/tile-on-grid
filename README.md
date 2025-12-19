@@ -2,7 +2,7 @@
 
 **Tile on Grid** is a keyboard-centric tiling window manager extension for GNOME Shell, inspired by Rectangle and other tiling tools. It provides a visual grid overlay for precise window placement and features a "HUD" style interface for intuitive control.
 
-![Tile on Grid Screenshot](https://github.com/se-in/tile-on-grid/raw/main/screenshot.png)
+![Tile on Grid Screenshot](https://github.com/dayliver/tile-on-grid/raw/main/screenshot.png)
 *(Note: Upload a screenshot later and replace this link!)*
 
 ## ✨ Key Features
@@ -22,7 +22,7 @@
 ### From Source
 1.  Clone this repository:
     ```bash
-    git clone [https://github.com/se-in/tile-on-grid.git](https://github.com/se-in/tile-on-grid.git)
+    git clone [https://github.com/dayliver/tile-on-grid.git](https://github.com/dayliver/tile-on-grid.git)
     ```
 2.  Move to the extensions folder:
     ```bash
