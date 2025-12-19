@@ -22,7 +22,7 @@
 ### From Source
 1.  Clone this repository:
     ```bash
-    git clone [https://github.com/dayliver/tile-on-grid.git](https://github.com/dayliver/tile-on-grid.git)
+    git clone https://github.com/dayliver/tile-on-grid.git
     ```
 2.  Move to the extensions folder:
     ```bash
