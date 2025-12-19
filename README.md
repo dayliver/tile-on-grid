@@ -51,6 +51,11 @@
 * `Q`, `W`, `E` ... `Z`, `X`, `C`: Move window to the corresponding cell immediately.
 * `Esc`: Cancel.
 
+## 🤝 Credits
+
+This project is heavily inspired by [Rectangle](https://extensions.gnome.org/extension/6553/rectangle/).
+Huge thanks to the original developers for their excellent work on the window geometry logic, which laid the foundation for this extension.
+
 ## ⚖️ License
 
 Distributed under the GPL-3.0 License. See `LICENSE` for more information.
