@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.tile-on-grid" path="/org/gnome/shell/extensions/tile-on-grid/">
+    
+    <key name="padding-inner" type="i"><default>8</default><summary>Inner Padding</summary></key>
+    <key name="padding-outer" type="i"><default>8</default><summary>Outer Padding</summary></key>
+    <key name="animate-movement" type="b"><default>true</default><summary>Enable Animation</summary></key>
+    <key name="animation-duration" type="i"><default>200</default><summary>Animation Duration (ms)</summary></key>
+    
+    <key name="last-active-preset" type="s"><default>'9'</default><summary>Last used preset key</summary></key>
+
+    <key name="toggle-grid-shortcut" type="as"><default><![CDATA[['<Super>g']]]></default></key>
+    
+    <key name="move-left" type="as"><default><![CDATA[['<Super>Left']]]></default></key>
+    <key name="move-right" type="as"><default><![CDATA[['<Super>Right']]]></default></key>
+    <key name="move-up" type="as"><default><![CDATA[['<Super>Up']]]></default></key>
+    <key name="move-down" type="as"><default><![CDATA[['<Super>Down']]]></default></key>
+    
+    <key name="expand-left" type="as"><default><![CDATA[['<Super><Shift>Left']]]></default></key>
+    <key name="expand-right" type="as"><default><![CDATA[['<Super><Shift>Right']]]></default></key>
+    <key name="expand-up" type="as"><default><![CDATA[['<Super><Shift>Up']]]></default></key>
+    <key name="expand-down" type="as"><default><![CDATA[['<Super><Shift>Down']]]></default></key>
+    
+    <key name="shrink-left" type="as"><default><![CDATA[['<Super><Control>Left']]]></default></key>
+    <key name="shrink-right" type="as"><default><![CDATA[['<Super><Control>Right']]]></default></key>
+    <key name="shrink-up" type="as"><default><![CDATA[['<Super><Control>Up']]]></default></key>
+    <key name="shrink-down" type="as"><default><![CDATA[['<Super><Control>Down']]]></default></key>
+
+    <key name="focus-left" type="as"><default><![CDATA[['<Control><Alt>Left']]]></default></key>
+    <key name="focus-right" type="as"><default><![CDATA[['<Control><Alt>Right']]]></default></key>
+    <key name="focus-up" type="as"><default><![CDATA[['<Control><Alt>Up']]]></default></key>
+    <key name="focus-down" type="as"><default><![CDATA[['<Control><Alt>Down']]]></default></key>
+
+  </schema>
+</schemalist>

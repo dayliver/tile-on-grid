@@ -1,0 +1,15 @@
+{
+  "name": "Tile on Grid",
+  "description": "Dynamic grid tiling window manager inspired by Rectangle",
+  "uuid": "tile-on-grid@hwaryong.com",
+  "shell-version": [
+    "45",
+    "46",
+    "47",
+    "48",
+    "49"
+  ],
+  "url": "https://github.com/dayliver/tile-on-grid",
+  "settings-schema": "org.gnome.shell.extensions.tile-on-grid",
+  "version": 1
+}
