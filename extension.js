@@ -1,13 +1,12 @@
-import GObject from 'gi://GObject';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
+import GObject from 'gi://GObject';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
-// --- [MODULE 1] Constants ---
 const KEY_ROWS = [
     [Clutter.KEY_q, Clutter.KEY_w, Clutter.KEY_e, Clutter.KEY_r, Clutter.KEY_t, Clutter.KEY_y, Clutter.KEY_u, Clutter.KEY_i, Clutter.KEY_o, Clutter.KEY_p],
     [Clutter.KEY_a, Clutter.KEY_s, Clutter.KEY_d, Clutter.KEY_f, Clutter.KEY_g, Clutter.KEY_h, Clutter.KEY_j, Clutter.KEY_k, Clutter.KEY_l, Clutter.KEY_semicolon],
@@ -28,8 +27,6 @@ const GRID_PRESETS = {
 };
 const DEFAULT_PRESET_KEY = '9';
 
-
-// --- [MODULE 2] Window Logic ---
 class WindowManager {
     constructor(settings) {
         this._settings = settings;
@@ -245,8 +242,6 @@ class WindowManager {
     }
 }
 
-
-// --- [MODULE 3] Visual Overlay ---
 const GridOverlay = GObject.registerClass(
 class GridOverlay extends St.Widget {
     _init(monitor, currentPresetKey, callbacks) {
@@ -381,14 +376,10 @@ class GridOverlay extends St.Widget {
     }
 
     _getPhysicalSymbol(event) {
-        try {
-            const hwCode = event.get_key_code(); 
-            const keymap = Clutter.get_default_backend().get_keymap();
-            const [success, keyval] = keymap.translate_keyboard_state(hwCode, 0, 0);
-            if (success) return keyval;
-        } catch (e) {
-            console.warn("[TileOnGrid] Key translation failed:", e);
-        }
+        const hwCode = event.get_key_code(); 
+        const keymap = Clutter.get_default_backend().get_keymap();
+        const [success, keyval] = keymap.translate_keyboard_state(hwCode, 0, 0);
+        if (success) return keyval;
         return event.get_key_symbol();
     }
 
@@ -454,17 +445,14 @@ class GridOverlay extends St.Widget {
     }
 });
 
-
-// --- [MODULE 4] Main ---
 export default class TileOnGrid extends Extension {
     enable() {
-        // [Fix 2 & 3] try-catch 제거 & getSettings 파라미터 제거
         this._settings = this.getSettings();
 
         this._manager = new WindowManager(this._settings);
         this._overlay = null;
         this._modal = false;
-        this._applyTimeoutId = null; // [Fix 4] Timeout ID 추적 변수
+        this._applyTimeoutId = null;
 
         this._addKey('toggle-grid-shortcut', () => this._toggleOverlay());
 
@@ -489,7 +477,6 @@ export default class TileOnGrid extends Extension {
 
         this._closeOverlay();
         
-        // [Fix 4] Disable 시 타임아웃 제거
         if (this._applyTimeoutId) {
             GLib.Source.remove(this._applyTimeoutId);
             this._applyTimeoutId = null;
@@ -499,12 +486,10 @@ export default class TileOnGrid extends Extension {
         this._settings = null;
     }
 
-    // [Fix 3] try-catch 제거
     _addKey(name, callback) {
         Main.wm.addKeybinding(name, this._settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL, callback);
     }
     
-    // [Fix 3] try-catch 제거
     _removeKey(name) {
         Main.wm.removeKeybinding(name);
     }
@@ -512,7 +497,7 @@ export default class TileOnGrid extends Extension {
     _closeOverlay() {
         if (this._overlay) {
             if (this._modal) {
-                try { Main.popModal(this._overlay); } catch(e) {}
+                Main.popModal(this._overlay);
                 this._modal = false;
             }
             this._overlay.destroy();
@@ -537,7 +522,6 @@ export default class TileOnGrid extends Extension {
             onSelect: (presetKey, index, rs, cs) => {
                 this._closeOverlay(); 
                 
-                // [Fix 4] 기존 타임아웃 제거 후 새로 생성
                 if (this._applyTimeoutId) {
                     GLib.Source.remove(this._applyTimeoutId);
                     this._applyTimeoutId = null;
@@ -545,7 +529,7 @@ export default class TileOnGrid extends Extension {
 
                 this._applyTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 10, () => {
                      this._manager.applyTile(win, presetKey, index, rs, cs);
-                     this._applyTimeoutId = null; // 완료 후 초기화
+                     this._applyTimeoutId = null;
                      return GLib.SOURCE_REMOVE;
                 });
             },
