@@ -26,8 +26,7 @@ const GRID_PRESETS = {
     '8': { rows: [4, 4], name: "2x4 Grid" },
     '9': { rows: [3, 3, 3], name: "3x3 Grid" }
 };
-// 기본값은 이제 스키마에서 로드하므로 상수는 fallback용
-const FALLBACK_PRESET_KEY = '9';
+const DEFAULT_PRESET_KEY = '9';
 
 
 // --- [MODULE 2] Window Logic ---
@@ -42,13 +41,11 @@ class WindowManager {
         if (this._animId) { GLib.Source.remove(this._animId); this._animId = null; }
     }
 
-    // 마지막 사용 프리셋 가져오기
     getLastPreset() {
         const val = this._settings.get_string('last-active-preset');
-        return GRID_PRESETS[val] ? val : FALLBACK_PRESET_KEY;
+        return GRID_PRESETS[val] ? val : DEFAULT_PRESET_KEY;
     }
 
-    // 프리셋 변경 시 저장
     setLastPreset(key) {
         if (GRID_PRESETS[key]) {
             this._settings.set_string('last-active-preset', key);
@@ -57,7 +54,6 @@ class WindowManager {
 
     getWindowState(window) {
         if (!this._windowStates.has(window)) {
-            // 새 창은 마지막에 썼던 프리셋을 기준으로 초기화
             this._windowStates.set(window, {
                 presetKey: this.getLastPreset(),
                 index: 4, rs: 1, cs: 1
@@ -161,7 +157,6 @@ class WindowManager {
     applyTile(window, presetKey, index, rs, cs) {
         if (!window || !window.get_monitor) return;
         
-        // 프리셋 변경 시 저장 (사용자가 명시적으로 선택했거나, 이동했을 때)
         this.setLastPreset(presetKey);
         this.setWindowState(window, { presetKey, index, rs, cs });
 
@@ -206,7 +201,6 @@ class WindowManager {
 
     _getWorkArea(window) {
         const workArea = window.get_work_area_current_monitor();
-        // Margins removed as requested, using only workArea
         return {
             x: workArea.x,
             y: workArea.y,
@@ -255,25 +249,32 @@ class WindowManager {
 // --- [MODULE 3] Visual Overlay ---
 const GridOverlay = GObject.registerClass(
 class GridOverlay extends St.Widget {
-    _init(monitor, currentPresetKey, callback) {
+    _init(monitor, currentPresetKey, callbacks) {
         super._init({
             style_class: 'grid-overlay',
             reactive: true,
-            can_focus: true, // 포커스 가능 명시
+            can_focus: true,
             x: monitor.x,
             y: monitor.y,
             width: monitor.width,
             height: monitor.height,
         });
         
+        this.connect('button-press-event', (actor, event) => {
+            if (actor === this) {
+                if (this._onCancel) this._onCancel();
+                return Clutter.EVENT_STOP;
+            }
+            return Clutter.EVENT_PROPAGATE;
+        });
+
         this.set_layout_manager(new Clutter.BinLayout());
 
         this._monitor = monitor;
-        this._callback = callback;
+        this._onSelect = callbacks.onSelect;
+        this._onCancel = callbacks.onCancel;
         this._currentPresetKey = currentPresetKey;
         this._keyMap = new Map();
-
-        this.set_style('background-color: rgba(0,0,0,0.4);');
 
         this._contentBox = new St.BoxLayout({
             vertical: true,
@@ -295,6 +296,7 @@ class GridOverlay extends St.Widget {
         this._contentBox.add_child(this._gridBox);
 
         this._rebuildGrid();
+        
         this.connect('key-press-event', this._onKeyPress.bind(this));
     }
 
@@ -304,6 +306,14 @@ class GridOverlay extends St.Widget {
             style: `background-color: rgba(30, 30, 30, 0.9); border-radius: 50px; padding: 10px 24px; spacing: 16px; border: 1px solid rgba(255,255,255,0.2);`,
             x_align: Clutter.ActorAlign.CENTER
         });
+
+        const closeBtn = new St.Button({
+            label: "✖",
+            style: "color: #ff6666; font-weight: bold; font-size: 16px; padding: 0 8px;",
+            reactive: true, can_focus: true
+        });
+        closeBtn.connect('clicked', () => { if (this._onCancel) this._onCancel(); });
+        this._hudBox.add_child(closeBtn);
 
         this._layoutLabel = new St.Label({ text: "...", style: "font-weight: 800; font-size: 16px; color: #ffffff;" });
         const helpStyle = "font-size: 14px; color: #cccccc; background-color: rgba(255,255,255,0.1); border-radius: 8px; padding: 4px 10px;";
@@ -356,12 +366,12 @@ class GridOverlay extends St.Widget {
                     label: displayChar,
                     width: cellW, height: cellH,
                     style_class: 'grid-cell',
-                    style: `border-radius: 16px; border: 2px solid rgba(255,255,255,0.2); background-color: rgba(50,50,50,0.5); color: white; font-size: 32px; font-weight: 900; text-shadow: 0 2px 5px rgba(0,0,0,0.7);`
+                    style: `border-radius: 16px; border: 2px solid rgba(255,255,255,0.2); background-color: rgba(50,50,50,0.5); color: white; font-size: 32px; font-weight: 900; text-shadow: 0 2px 5px rgba(0,0,0,0.7);`,
+                    reactive: true, can_focus: true
                 });
 
                 ((idx) => btn.connect('clicked', () => {
-                    if (this._callback) this._callback(this._currentPresetKey, idx, 1, 1);
-                    this.destroy();
+                    if (this._onSelect) this._onSelect(this._currentPresetKey, idx, 1, 1);
                 }))(index);
 
                 rowBox.add_child(btn);
@@ -370,15 +380,34 @@ class GridOverlay extends St.Widget {
         }
     }
 
-    _onKeyPress(actor, event) {
-        const symbol = event.get_key_symbol();
-        if (symbol === Clutter.KEY_Escape) { this.destroy(); return Clutter.EVENT_STOP; }
+    _getPhysicalSymbol(event) {
+        try {
+            const hwCode = event.get_key_code(); 
+            const keymap = Clutter.get_default_backend().get_keymap();
+            const [success, keyval] = keymap.translate_keyboard_state(hwCode, 0, 0);
+            if (success) return keyval;
+        } catch (e) {
+            console.warn("[TileOnGrid] Key translation failed:", e);
+        }
+        return event.get_key_symbol();
+    }
 
-        // [Tab Cycle Logic]
-        if (symbol === Clutter.KEY_Tab || symbol === Clutter.KEY_ISO_Left_Tab) {
+    _onKeyPress(actor, event) {
+        const rawSymbol = event.get_key_symbol();
+        const physicalSymbol = this._getPhysicalSymbol(event);
+
+        if (rawSymbol === Clutter.KEY_Escape) { 
+            if (this._onCancel) this._onCancel(); 
+            return Clutter.EVENT_STOP; 
+        }
+        if (physicalSymbol === Clutter.KEY_g && (event.get_state() & Clutter.ModifierType.SUPER_MASK)) {
+             if (this._onCancel) this._onCancel();
+             return Clutter.EVENT_STOP;
+        }
+
+        if (rawSymbol === Clutter.KEY_Tab || rawSymbol === Clutter.KEY_ISO_Left_Tab) {
             const isShift = (event.get_state() & Clutter.ModifierType.SHIFT_MASK);
             let current = parseInt(this._currentPresetKey);
-            
             if (isShift) {
                 current--;
                 if (current < 1) current = 9;
@@ -386,32 +415,42 @@ class GridOverlay extends St.Widget {
                 current++;
                 if (current > 9) current = 1;
             }
-            
             this._currentPresetKey = current.toString();
             this._rebuildGrid();
             return Clutter.EVENT_STOP;
         }
 
         let num = -1;
-        if (symbol >= Clutter.KEY_1 && symbol <= Clutter.KEY_9) num = symbol - Clutter.KEY_1 + 1;
-        else if (symbol >= Clutter.KEY_KP_1 && symbol <= Clutter.KEY_KP_9) num = symbol - Clutter.KEY_KP_1 + 1;
+        if (rawSymbol >= Clutter.KEY_1 && rawSymbol <= Clutter.KEY_9) num = rawSymbol - Clutter.KEY_1 + 1;
+        else if (rawSymbol >= Clutter.KEY_KP_1 && rawSymbol <= Clutter.KEY_KP_9) num = rawSymbol - Clutter.KEY_KP_1 + 1;
 
         if (num !== -1) {
             const key = num.toString();
-            if (GRID_PRESETS[key]) {
+            const preset = GRID_PRESETS[key];
+            if (preset) {
+                const totalCells = preset.rows.reduce((sum, cols) => sum + cols, 0);
+                if (totalCells === 1) {
+                    if (this._onSelect) this._onSelect(key, 0, 1, 1);
+                    return Clutter.EVENT_STOP;
+                }
                 this._currentPresetKey = key;
                 this._rebuildGrid();
             }
             return Clutter.EVENT_STOP;
         }
 
-        if (this._keyMap.has(symbol)) {
-            let targetIndex = this._keyMap.get(symbol);
-            if (this._callback) this._callback(this._currentPresetKey, targetIndex, 1, 1);
-            this.destroy();
+        if (rawSymbol === Clutter.KEY_space || rawSymbol === Clutter.KEY_Return || rawSymbol === Clutter.KEY_KP_Enter) {
+            if (this._onSelect) this._onSelect(this._currentPresetKey, 0, 1, 1);
             return Clutter.EVENT_STOP;
         }
-        return Clutter.EVENT_PROPAGATE;
+
+        if (this._keyMap.has(physicalSymbol)) {
+            let targetIndex = this._keyMap.get(physicalSymbol);
+            if (this._onSelect) this._onSelect(this._currentPresetKey, targetIndex, 1, 1);
+            return Clutter.EVENT_STOP;
+        }
+        
+        return Clutter.EVENT_STOP;
     }
 });
 
@@ -419,11 +458,13 @@ class GridOverlay extends St.Widget {
 // --- [MODULE 4] Main ---
 export default class TileOnGrid extends Extension {
     enable() {
-        try { this._settings = this.getSettings('org.gnome.shell.extensions.tile-on-grid'); } 
-        catch (e) { console.error('Settings load failed', e); return; }
+        // [Fix 2 & 3] try-catch 제거 & getSettings 파라미터 제거
+        this._settings = this.getSettings();
 
         this._manager = new WindowManager(this._settings);
         this._overlay = null;
+        this._modal = false;
+        this._applyTimeoutId = null; // [Fix 4] Timeout ID 추적 변수
 
         this._addKey('toggle-grid-shortcut', () => this._toggleOverlay());
 
@@ -446,44 +487,80 @@ export default class TileOnGrid extends Extension {
             this._removeKey(`focus-${dir}`);
         });
 
-        if (this._overlay) { this._overlay.destroy(); this._overlay = null; }
+        this._closeOverlay();
+        
+        // [Fix 4] Disable 시 타임아웃 제거
+        if (this._applyTimeoutId) {
+            GLib.Source.remove(this._applyTimeoutId);
+            this._applyTimeoutId = null;
+        }
+
         if (this._manager) { this._manager.destroy(); this._manager = null; }
         this._settings = null;
     }
 
+    // [Fix 3] try-catch 제거
     _addKey(name, callback) {
-        try { Main.wm.addKeybinding(name, this._settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL, callback); } catch (e) {}
+        Main.wm.addKeybinding(name, this._settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL, callback);
     }
-    _removeKey(name) { try { Main.wm.removeKeybinding(name); } catch (e) {} }
+    
+    // [Fix 3] try-catch 제거
+    _removeKey(name) {
+        Main.wm.removeKeybinding(name);
+    }
+
+    _closeOverlay() {
+        if (this._overlay) {
+            if (this._modal) {
+                try { Main.popModal(this._overlay); } catch(e) {}
+                this._modal = false;
+            }
+            this._overlay.destroy();
+            this._overlay = null;
+        }
+    }
 
     _toggleOverlay() {
-        if (this._overlay) { this._overlay.destroy(); this._overlay = null; return; }
+        if (this._overlay) {
+            this._closeOverlay();
+            return;
+        }
         
         const win = global.display.focus_window;
         if (!win) return;
 
         const monitorIndex = win.get_monitor();
         const monitor = win.get_display().get_monitor_geometry(monitorIndex);
-        
-        // WindowManager에서 마지막 저장된 프리셋 키를 가져옴
         const lastPreset = this._manager.getLastPreset(); 
 
-        this._overlay = new GridOverlay(monitor, lastPreset, (presetKey, index, rs, cs) => {
-            this._manager.applyTile(win, presetKey, index, rs, cs);
-            this._overlay = null;
+        this._overlay = new GridOverlay(monitor, lastPreset, {
+            onSelect: (presetKey, index, rs, cs) => {
+                this._closeOverlay(); 
+                
+                // [Fix 4] 기존 타임아웃 제거 후 새로 생성
+                if (this._applyTimeoutId) {
+                    GLib.Source.remove(this._applyTimeoutId);
+                    this._applyTimeoutId = null;
+                }
+
+                this._applyTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 10, () => {
+                     this._manager.applyTile(win, presetKey, index, rs, cs);
+                     this._applyTimeoutId = null; // 완료 후 초기화
+                     return GLib.SOURCE_REMOVE;
+                });
+            },
+            onCancel: () => {
+                this._closeOverlay();
+            }
         });
 
         Main.layoutManager.addChrome(this._overlay, { trackFullscreen: true, affectsInputRegion: true });
         
-        // [반응성 개선 FIX]
-        // 즉시(idle)보다 약간의 딜레이(50ms)를 주어 셸이 키 이벤트를 완전히 처리한 후 포커스를 잡도록 함
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
-            if (this._overlay) {
-                this._overlay.grab_key_focus();
-                global.stage.set_key_focus(this._overlay); // Stage 포커스도 강제
-            }
-            return GLib.SOURCE_REMOVE;
-        });
+        if (Main.pushModal(this._overlay)) {
+            this._modal = true;
+        } else {
+            this._closeOverlay();
+        }
     }
 
     _handleDirectAction(action, direction) {

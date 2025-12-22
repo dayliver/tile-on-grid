@@ -11,5 +11,5 @@
   ],
   "url": "https://github.com/dayliver/tile-on-grid",
   "settings-schema": "org.gnome.shell.extensions.tile-on-grid",
-  "version": 1
+  "version": 2
 }
