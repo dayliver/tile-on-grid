@@ -7,12 +7,23 @@ import GObject from 'gi://GObject';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
-const KEY_ROWS = [
-    [Clutter.KEY_q, Clutter.KEY_w, Clutter.KEY_e, Clutter.KEY_r, Clutter.KEY_t, Clutter.KEY_y, Clutter.KEY_u, Clutter.KEY_i, Clutter.KEY_o, Clutter.KEY_p],
-    [Clutter.KEY_a, Clutter.KEY_s, Clutter.KEY_d, Clutter.KEY_f, Clutter.KEY_g, Clutter.KEY_h, Clutter.KEY_j, Clutter.KEY_k, Clutter.KEY_l, Clutter.KEY_semicolon],
-    [Clutter.KEY_z, Clutter.KEY_x, Clutter.KEY_c, Clutter.KEY_v, Clutter.KEY_b, Clutter.KEY_n, Clutter.KEY_m, Clutter.KEY_comma, Clutter.KEY_period, Clutter.KEY_slash]
+const HW_MAP = {
+    24: 0, 25: 1, 26: 2, 27: 3, 28: 4, 29: 5, 30: 6, 31: 7, 32: 8, 33: 9, // q w e r t y u i o p
+    38: 10, 39: 11, 40: 12, 41: 13, 42: 14, 43: 15, 44: 16, 45: 17, 46: 18, 47: 19, // a s d f g h j k l ;
+    52: 20, 53: 21, 54: 22, 55: 23, 56: 24, 57: 25, 58: 26, 59: 27, 60: 28, 61: 29  // z x c v b n m , . /
+};
+
+const DISPLAY_CHARS = [
+    'Q','W','E','R','T','Y','U','I','O','P',
+    'A','S','D','F','G','H','J','K','L',';',
+    'Z','X','C','V','B','N','M',',','.','/'
 ];
-const CHAR_MAP = { [Clutter.KEY_semicolon]: ';', [Clutter.KEY_comma]: ',', [Clutter.KEY_period]: '.', [Clutter.KEY_slash]: '/' };
+
+/** DISPLAY_CHARS / HW_MAP index for grid row r, column c: row0=QWER…, row1=ASDF…, row2+=ZXCV… */
+function keyboardSlotForGridCell(gridRow, colInRow) {
+    const rowBase = gridRow < 2 ? gridRow * 10 : 20;
+    return rowBase + colInRow;
+}
 
 const GRID_PRESETS = {
     '1': { rows: [1], name: "Full" },
@@ -27,15 +38,48 @@ const GRID_PRESETS = {
 };
 const DEFAULT_PRESET_KEY = '9';
 
+/** Integer segment sizes so gaps + cells exactly fill totalPixels (no float drift on right/bottom edges). */
+function distributeSegmentSizes(totalPixels, segmentCount, gapPx) {
+    if (segmentCount <= 0)
+        return [];
+    const gapTotal = Math.max(0, segmentCount - 1) * gapPx;
+    const forSeg = Math.max(0, totalPixels - gapTotal);
+    const base = Math.floor(forSeg / segmentCount);
+    const rem = forSeg - base * segmentCount;
+    const sizes = [];
+    for (let i = 0; i < segmentCount; i++)
+        sizes.push(base + (i < rem ? 1 : 0));
+    return sizes;
+}
+
+function cumulativeSegmentOffset(sizes, gapPx, beforeIndex) {
+    let pos = 0;
+    for (let i = 0; i < beforeIndex; i++)
+        pos += sizes[i] + gapPx;
+    return pos;
+}
+
+function spanSegmentsWithGaps(sizes, gapPx, startIdx, spanCount) {
+    let n = 0;
+    for (let i = 0; i < spanCount; i++) {
+        n += sizes[startIdx + i];
+        if (i < spanCount - 1)
+            n += gapPx;
+    }
+    return n;
+}
+
 class WindowManager {
     constructor(settings) {
         this._settings = settings;
         this._animId = null;
+        this._settleId = null;
         this._windowStates = new WeakMap();
     }
 
     destroy() {
         if (this._animId) { GLib.Source.remove(this._animId); this._animId = null; }
+        if (this._settleId) { GLib.Source.remove(this._settleId); this._settleId = null; }
     }
 
     getLastPreset() {
@@ -65,23 +109,16 @@ class WindowManager {
         const currentWin = display.focus_window;
         if (!currentWin) return;
 
-        const currentRect = currentWin.get_frame_rect();
-        const currentCenter = { 
-            x: currentRect.x + currentRect.width / 2, 
-            y: currentRect.y + currentRect.height / 2 
-        };
-
         const windows = display.get_tab_list(Meta.TabList.NORMAL, display.get_workspace_manager().get_active_workspace());
-        
         let bestWin = null;
         let minDistance = Infinity;
+        const currentRect = currentWin.get_frame_rect();
+        const currentCenter = { x: currentRect.x + currentRect.width / 2, y: currentRect.y + currentRect.height / 2 };
 
         windows.forEach(win => {
             if (win === currentWin) return;
-            
             const rect = win.get_frame_rect();
             const center = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-            
             let valid = false;
             const deltaX = center.x - currentCenter.x;
             const deltaY = center.y - currentCenter.y;
@@ -101,9 +138,7 @@ class WindowManager {
             }
         });
 
-        if (bestWin) {
-            bestWin.activate(global.get_current_time());
-        }
+        if (bestWin) bestWin.activate(global.get_current_time());
     }
 
     transformWindow(window, action, direction) {
@@ -180,19 +215,23 @@ class WindowManager {
         const availableW = workArea.width - (2 * pads.outer);
         const availableH = workArea.height - (2 * pads.outer);
 
-        const cellH = (availableH - (rowsCount - 1) * pads.inner) / rowsCount;
-        const targetH = rs * cellH + (rs - 1) * pads.inner;
-        const targetY = workArea.y + pads.outer + rIndex * (cellH + pads.inner);
+        const rowHeights = distributeSegmentSizes(availableH, rowsCount, pads.inner);
+        const colWidths = distributeSegmentSizes(availableW, colsCount, pads.inner);
 
-        const cellW = (availableW - (colsCount - 1) * pads.inner) / colsCount;
-        const targetW = cs * cellW + (cs - 1) * pads.inner;
-        const targetX = workArea.x + pads.outer + cIndex * (cellW + pads.inner);
+        const innerLeft = workArea.x + pads.outer;
+        const innerTop = workArea.y + pads.outer;
+
+        const targetY = innerTop + cumulativeSegmentOffset(rowHeights, pads.inner, rIndex);
+        const targetH = spanSegmentsWithGaps(rowHeights, pads.inner, rIndex, rs);
+
+        const targetX = innerLeft + cumulativeSegmentOffset(colWidths, pads.inner, cIndex);
+        const targetW = spanSegmentsWithGaps(colWidths, pads.inner, cIndex, cs);
 
         this._animateWindow(window, {
-            x: Math.round(targetX),
-            y: Math.round(targetY),
-            width: Math.round(targetW),
-            height: Math.round(targetH)
+            x: targetX,
+            y: targetY,
+            width: targetW,
+            height: targetH
         });
     }
 
@@ -206,7 +245,32 @@ class WindowManager {
         };
     }
 
+    _scheduleResizeSettle(window, targetGeo) {
+        if (this._settleId) {
+            GLib.Source.remove(this._settleId);
+            this._settleId = null;
+        }
+        const x = targetGeo.x;
+        const y = targetGeo.y;
+        const w = targetGeo.width;
+        const h = targetGeo.height;
+        this._settleId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 75, () => {
+            this._settleId = null;
+            try {
+                window.move_resize_frame(true, x, y, w, h);
+            } catch (e) {
+                /* window gone */
+            }
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
     _animateWindow(window, targetGeo) {
+        if (this._settleId) {
+            GLib.Source.remove(this._settleId);
+            this._settleId = null;
+        }
+
         if (window.maximized_horizontally || window.maximized_vertically) {
             window.unmaximize(Meta.MaximizeFlags.BOTH);
         }
@@ -217,6 +281,7 @@ class WindowManager {
 
         if (!animate) {
             window.move_resize_frame(true, targetGeo.x, targetGeo.y, targetGeo.width, targetGeo.height);
+            this._scheduleResizeSettle(window, targetGeo);
             return;
         }
 
@@ -227,7 +292,7 @@ class WindowManager {
             time += 10;
             let t = time / duration;
             if (t > 1) t = 1;
-            t = (--t) * t * t + 1; 
+            t = (--t) * t * t + 1;
 
             const cx = (1 - t) * startGeo.x + t * targetGeo.x;
             const cy = (1 - t) * startGeo.y + t * targetGeo.y;
@@ -236,7 +301,11 @@ class WindowManager {
 
             window.move_resize_frame(true, Math.round(cx), Math.round(cy), Math.round(cw), Math.round(ch));
 
-            if (t === 1) { this._animId = null; return false; }
+            if (t === 1) {
+                this._animId = null;
+                this._scheduleResizeSettle(window, targetGeo);
+                return false;
+            }
             return true;
         });
     }
@@ -256,11 +325,23 @@ class GridOverlay extends St.Widget {
         });
         
         this.connect('button-press-event', (actor, event) => {
-            if (actor === this) {
-                if (this._onCancel) this._onCancel();
-                return Clutter.EVENT_STOP;
+            const [x, y] = event.get_coords();
+            let picked = null;
+            try {
+                picked = global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, x, y);
+            } catch (e) {
+                picked = null;
             }
-            return Clutter.EVENT_PROPAGATE;
+
+            let a = picked;
+            while (a && a !== this) {
+                if (a._gridIndex !== undefined)
+                    return Clutter.EVENT_PROPAGATE;
+                a = a.get_parent ? a.get_parent() : null;
+            }
+
+            if (this._onCancel) this._onCancel();
+            return Clutter.EVENT_STOP;
         });
 
         this.set_layout_manager(new Clutter.BinLayout());
@@ -269,7 +350,8 @@ class GridOverlay extends St.Widget {
         this._onSelect = callbacks.onSelect;
         this._onCancel = callbacks.onCancel;
         this._currentPresetKey = currentPresetKey;
-        this._keyMap = new Map();
+        this._indexMap = new Map();
+        this._linearToGlobal = new Map();
 
         this._contentBox = new St.BoxLayout({
             vertical: true,
@@ -317,7 +399,7 @@ class GridOverlay extends St.Widget {
         this._hudBox.add_child(new St.Label({ text: "|", style: "color: #666;" }));
         this._hudBox.add_child(new St.Label({ text: "Tab: Cycle", style: helpStyle }));
         this._hudBox.add_child(new St.Label({ text: "1-9: Layout", style: helpStyle }));
-        this._hudBox.add_child(new St.Label({ text: "Q-M: Select", style: helpStyle }));
+        this._hudBox.add_child(new St.Label({ text: "QWE / ASD / ZX rows", style: helpStyle }));
 
         this._contentBox.add_child(this._hudBox);
     }
@@ -329,7 +411,8 @@ class GridOverlay extends St.Widget {
 
     _rebuildGrid() {
         this._gridBox.destroy_all_children();
-        this._keyMap.clear();
+        this._indexMap.clear();
+        this._linearToGlobal.clear();
 
         const preset = GRID_PRESETS[this._currentPresetKey];
         const rows = preset.rows;
@@ -344,17 +427,19 @@ class GridOverlay extends St.Widget {
             let colsInRow = rows[r];
             let cellH = totalH / rows.length;
             let cellW = totalW / colsInRow;
-            let keyRow = (r < KEY_ROWS.length) ? KEY_ROWS[r] : [];
 
             for (let c = 0; c < colsInRow; c++) {
-                let index = globalIndex++;
-                let keyCode = (c < keyRow.length) ? keyRow[c] : null;
-                let displayChar = "";
+                const index = globalIndex++;
+                const keyboardSlot = keyboardSlotForGridCell(r, c);
+                let displayChar = '';
+                if (keyboardSlot < DISPLAY_CHARS.length)
+                    displayChar = DISPLAY_CHARS[keyboardSlot];
 
-                if (keyCode) {
-                    this._keyMap.set(keyCode, index);
-                    if (CHAR_MAP[keyCode]) displayChar = CHAR_MAP[keyCode];
-                    else if (keyCode >= Clutter.KEY_a && keyCode <= Clutter.KEY_z) displayChar = String.fromCharCode(keyCode - 32);
+                this._linearToGlobal.set(keyboardSlot, index);
+
+                for (const [code, mappedIdx] of Object.entries(HW_MAP)) {
+                    if (mappedIdx === keyboardSlot)
+                        this._indexMap.set(parseInt(code, 10), index);
                 }
 
                 let btn = new St.Button({
@@ -364,9 +449,11 @@ class GridOverlay extends St.Widget {
                     style: `border-radius: 16px; border: 2px solid rgba(255,255,255,0.2); background-color: rgba(50,50,50,0.5); color: white; font-size: 32px; font-weight: 900; text-shadow: 0 2px 5px rgba(0,0,0,0.7);`,
                     reactive: true, can_focus: true
                 });
+                btn._gridIndex = index;
 
                 ((idx) => btn.connect('clicked', () => {
                     if (this._onSelect) this._onSelect(this._currentPresetKey, idx, 1, 1);
+                    return Clutter.EVENT_STOP; 
                 }))(index);
 
                 rowBox.add_child(btn);
@@ -375,23 +462,15 @@ class GridOverlay extends St.Widget {
         }
     }
 
-    _getPhysicalSymbol(event) {
-        const hwCode = event.get_key_code(); 
-        const keymap = Clutter.get_default_backend().get_keymap();
-        const [success, keyval] = keymap.translate_keyboard_state(hwCode, 0, 0);
-        if (success) return keyval;
-        return event.get_key_symbol();
-    }
-
     _onKeyPress(actor, event) {
         const rawSymbol = event.get_key_symbol();
-        const physicalSymbol = this._getPhysicalSymbol(event);
+        const hwCode = event.get_key_code();
 
         if (rawSymbol === Clutter.KEY_Escape) { 
             if (this._onCancel) this._onCancel(); 
             return Clutter.EVENT_STOP; 
         }
-        if (physicalSymbol === Clutter.KEY_g && (event.get_state() & Clutter.ModifierType.SUPER_MASK)) {
+        if (rawSymbol === Clutter.KEY_g && (event.get_state() & Clutter.ModifierType.SUPER_MASK)) {
              if (this._onCancel) this._onCancel();
              return Clutter.EVENT_STOP;
         }
@@ -435,12 +514,31 @@ class GridOverlay extends St.Widget {
             return Clutter.EVENT_STOP;
         }
 
-        if (this._keyMap.has(physicalSymbol)) {
-            let targetIndex = this._keyMap.get(physicalSymbol);
+        let targetIndex = null;
+
+        if (this._indexMap.has(hwCode))
+            targetIndex = this._indexMap.get(hwCode);
+        else {
+            const linear = HW_MAP[hwCode];
+            if (linear !== undefined && this._linearToGlobal.has(linear))
+                targetIndex = this._linearToGlobal.get(linear);
+        }
+
+        if (targetIndex === null) {
+            const uni = Clutter.keysym_to_unicode(rawSymbol);
+            if (uni) {
+                const ch = String.fromCharCode(uni).toUpperCase();
+                const slot = DISPLAY_CHARS.indexOf(ch);
+                if (slot !== -1 && this._linearToGlobal.has(slot))
+                    targetIndex = this._linearToGlobal.get(slot);
+            }
+        }
+
+        if (targetIndex !== null) {
             if (this._onSelect) this._onSelect(this._currentPresetKey, targetIndex, 1, 1);
             return Clutter.EVENT_STOP;
         }
-        
+
         return Clutter.EVENT_STOP;
     }
 });
@@ -451,8 +549,10 @@ export default class TileOnGrid extends Extension {
 
         this._manager = new WindowManager(this._settings);
         this._overlay = null;
-        this._modal = false;
+        this._grab = null;
+        this._capturedEventId = 0;
         this._applyTimeoutId = null;
+        this._focusIdleId = null;
 
         this._addKey('toggle-grid-shortcut', () => this._toggleOverlay());
 
@@ -481,6 +581,10 @@ export default class TileOnGrid extends Extension {
             GLib.Source.remove(this._applyTimeoutId);
             this._applyTimeoutId = null;
         }
+        if (this._focusIdleId) {
+            GLib.Source.remove(this._focusIdleId);
+            this._focusIdleId = null;
+        }
 
         if (this._manager) { this._manager.destroy(); this._manager = null; }
         this._settings = null;
@@ -493,13 +597,23 @@ export default class TileOnGrid extends Extension {
     _removeKey(name) {
         Main.wm.removeKeybinding(name);
     }
-
     _closeOverlay() {
+        if (this._focusIdleId) {
+            GLib.Source.remove(this._focusIdleId);
+            this._focusIdleId = null;
+        }
+
+        if (this._capturedEventId && this._overlay) {
+            this._overlay.disconnect(this._capturedEventId);
+            this._capturedEventId = 0;
+        }
+
         if (this._overlay) {
-            if (this._modal) {
-                Main.popModal(this._overlay);
-                this._modal = false;
+            if (this._grab) {
+                Main.popModal(this._grab);
+                this._grab = null;
             }
+
             this._overlay.destroy();
             this._overlay = null;
         }
@@ -512,7 +626,7 @@ export default class TileOnGrid extends Extension {
         }
         
         const win = global.display.focus_window;
-        if (!win) return;
+        if (!win) return; 
 
         const monitorIndex = win.get_monitor();
         const monitor = win.get_display().get_monitor_geometry(monitorIndex);
@@ -538,10 +652,65 @@ export default class TileOnGrid extends Extension {
             }
         });
 
-        Main.layoutManager.addChrome(this._overlay, { trackFullscreen: true, affectsInputRegion: true });
-        
-        if (Main.pushModal(this._overlay)) {
-            this._modal = true;
+        /* Above real windows (see LayoutManager.addChrome vs modalDialogGroup); otherwise in GNOME 50+
+           keyboard focus stays with clients and keys leak into the focused app. */
+        Main.layoutManager.modalDialogGroup.add_child(this._overlay);
+
+        this._grab = Main.pushModal(this._overlay, {
+            actionMode: Shell.ActionMode.SYSTEM_MODAL,
+        });
+        if (this._grab) {
+            this._capturedEventId = this._overlay.connect('captured-event', (_stage, event) => {
+                if (!this._overlay)
+                    return Clutter.EVENT_PROPAGATE;
+
+                const type = event.type();
+
+                if (type === Clutter.EventType.KEY_PRESS) {
+                    if (Main.keyboard.maybeHandleEvent(event))
+                        return Clutter.EVENT_STOP;
+                    if (this._overlay._onKeyPress)
+                        return this._overlay._onKeyPress(this._overlay, event);
+                    return Clutter.EVENT_STOP;
+                }
+
+                if (type === Clutter.EventType.BUTTON_PRESS) {
+                    const [x, y] = event.get_coords();
+                    let picked = null;
+                    try {
+                        picked = global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, x, y);
+                    } catch (e) {
+                        picked = null;
+                    }
+
+                    let a = picked;
+                    while (a && a !== this._overlay) {
+                        if (a._gridIndex !== undefined) {
+                            if (this._overlay._onSelect)
+                                this._overlay._onSelect(this._overlay._currentPresetKey, a._gridIndex, 1, 1);
+                            return Clutter.EVENT_STOP;
+                        }
+                        a = a.get_parent ? a.get_parent() : null;
+                    }
+
+                    if (this._overlay._onCancel)
+                        this._overlay._onCancel();
+                    return Clutter.EVENT_STOP;
+                }
+
+                return Clutter.EVENT_STOP;
+            });
+
+            if (this._focusIdleId)
+                GLib.Source.remove(this._focusIdleId);
+            this._focusIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                this._focusIdleId = null;
+                if (this._overlay) {
+                    global.stage.set_key_focus(this._overlay);
+                    this._overlay.grab_key_focus();
+                }
+                return GLib.SOURCE_REMOVE;
+            });
         } else {
             this._closeOverlay();
         }

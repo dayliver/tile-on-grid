@@ -7,9 +7,10 @@
     "46",
     "47",
     "48",
-    "49"
+    "49",
+    "50"
   ],
   "url": "https://github.com/dayliver/tile-on-grid",
   "settings-schema": "org.gnome.shell.extensions.tile-on-grid",
-  "version": 3
+  "version": 5
 }

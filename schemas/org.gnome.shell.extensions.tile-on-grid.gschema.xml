@@ -2,8 +2,8 @@
 <schemalist>
   <schema id="org.gnome.shell.extensions.tile-on-grid" path="/org/gnome/shell/extensions/tile-on-grid/">
     
-    <key name="padding-inner" type="i"><default>8</default><summary>Inner Padding</summary></key>
-    <key name="padding-outer" type="i"><default>8</default><summary>Outer Padding</summary></key>
+    <key name="padding-inner" type="i"><default>16</default><summary>Inner Padding</summary></key>
+    <key name="padding-outer" type="i"><default>16</default><summary>Outer Padding</summary></key>
     <key name="animate-movement" type="b"><default>true</default><summary>Enable Animation</summary></key>
     <key name="animation-duration" type="i"><default>200</default><summary>Animation Duration (ms)</summary></key>
     
