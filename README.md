@@ -1,60 +1,46 @@
 # Tile on Grid
 
-**Tile on Grid** is a keyboard-centric tiling window manager extension for GNOME Shell, inspired by Rectangle and other tiling tools. It provides a visual grid overlay for precise window placement and features a "HUD" style interface for intuitive control. Additionally, minor shortcut adjustments have been made, and it has been updated to support GNOME 50 and Ubuntu 26.04.
+**Tile on Grid** is a keyboard-centric tiling extension for GNOME Shell, inspired by Rectangle. Windows snap to configurable **fractional sizes** of the work area and move along guide edges using Super / Shift / Ctrl + arrow keys.
 
-![Tile on Grid Screenshot](https://github.com/dayliver/tile-on-grid/raw/main/screenshot.png)
+## Key Features
 
-## ✨ Key Features
+* **Fraction snap tiling** — horizontal defaults `1/4 · 1/3 · 1/2 · 2/3 · 3/4 · 1`, vertical defaults `1/3 · 1/2 · 2/3 · 1` (fully editable in preferences).
+* **Move / Expand / Shrink** with the same shortcut family as classic Rectangle-style tools.
+* **Focus neighbors** with Ctrl+Alt+Arrow.
+* **Super+G** opens a **shortcuts help overlay** (later: mouse placement menu).
+* Padding, animation, and every shortcut are configurable.
 
-* **Visual Grid Overlay**: Press `<Super>+g` to summon a grid overlay centered on your screen.
-* **Grid Presets**: Quickly switch between layouts (1x2, 2x2, 3x3, 1x4, etc.) using number keys `1`–`9`.
-* **QWERTY Selection**: Select grid cells instantly using keys mapped to their physical location (e.g., `Q`, `W`, `E` for top row).
-* **Keyboard Navigation**:
-    * Move windows: `<Super> + Arrow`
-    * Expand windows: `<Super> + Shift + Arrow`
-    * Shrink windows: `<Super> + Ctrl + Arrow`
-    * **Focus Navigation**: Switch focus to neighboring windows using `<Ctrl> + <Alt> + Arrow`.
-* **Customizable**: Adjust padding, animation speed, and shortcuts via Extension Settings.
-
-## 🚀 Installation
+## Installation
 
 ### From Source
-1.  Clone this repository:
-    ```bash
-    git clone https://github.com/dayliver/tile-on-grid.git
-    ```
-2.  Move to the extensions folder:
-    ```bash
-    mv tile-on-grid ~/.local/share/gnome-shell/extensions/tile-on-grid@hwaryong.com
-    ```
-3.  Compile schemas:
-    ```bash
-    cd ~/.local/share/gnome-shell/extensions/tile-on-grid@hwaryong.com
-    glib-compile-schemas schemas/
-    ```
-4.  Restart GNOME Shell (Log out & Log in) and enable the extension.
 
-## 🎮 Controls
+```bash
+git clone https://github.com/dayliver/tile-on-grid.git
+mkdir -p ~/.local/share/gnome-shell/extensions
+ln -sfn "$(pwd)/tile-on-grid" ~/.local/share/gnome-shell/extensions/tile-on-grid@hwaryong.com
+# or copy the folder named tile-on-grid@hwaryong.com
+cd ~/.local/share/gnome-shell/extensions/tile-on-grid@hwaryong.com
+glib-compile-schemas schemas/
+```
 
-| Action | Shortcut (Default) |
+Restart GNOME Shell (log out & log in on Wayland) and enable the extension.
+
+## Controls (defaults)
+
+| Action | Shortcut |
 | :--- | :--- |
-| **Toggle Grid** | `<Super> + g` |
-| **Move Window** | `<Super> + Arrow` |
-| **Expand Window** | `<Super> + Shift + Arrow` |
-| **Shrink Window** | `<Super> + Ctrl + Arrow` |
-| **Focus Neighbor** | `<Ctrl> + <Alt> + Arrow` |
+| **Show help overlay** | `<Super> + g` |
+| **Move** | `<Super> + Arrow` |
+| **Expand** | `<Super> + Shift + Arrow` |
+| **Shrink** | `<Super> + Ctrl + Arrow` |
+| **Focus neighbor** | `<Ctrl> + <Alt> + Arrow` |
 
-### While Grid is Active:
-* `Tab` / `Shift+Tab`: Cycle through layouts.
-* `1` – `9`: Select specific grid layout.
-* `Q`, `W`, `E` ... `Z`, `X`, `C`: Move window to the corresponding cell immediately.
-* `Esc`: Cancel.
+> **Note:** GNOME’s own WM bindings (especially `<Super>Down` → unmaximize) can steal keys. Clear conflicting entries under Settings → Keyboard → View and Customize Shortcuts → Windows, or rebind them in this extension’s preferences.
 
-## 🤝 Credits
+## Credits
 
-This project is heavily inspired by [Rectangle](https://extensions.gnome.org/extension/6553/rectangle/).
-Huge thanks to the original developers for their excellent work on the window geometry logic, which laid the foundation for this extension.
+Inspired by [Rectangle](https://extensions.gnome.org/extension/6553/rectangle/).
 
-## ⚖️ License
+## License
 
-Distributed under the GPL-3.0 License. See `LICENSE` for more information.
+GPL-3.0. See `LICENSE`.

@@ -1,6 +1,6 @@
 {
   "name": "Tile on Grid",
-  "description": "Dynamic grid tiling window manager inspired by Rectangle",
+  "description": "Keyboard fraction-snap window tiling (move / expand / shrink) inspired by Rectangle",
   "uuid": "tile-on-grid@hwaryong.com",
   "shell-version": [
     "45",
@@ -12,5 +12,5 @@
   ],
   "url": "https://github.com/dayliver/tile-on-grid",
   "settings-schema": "org.gnome.shell.extensions.tile-on-grid",
-  "version": 5
+  "version": 6
 }
