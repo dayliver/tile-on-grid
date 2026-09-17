@@ -1,6 +1,6 @@
 {
   "name": "Tile on Grid",
-  "description": "Keyboard fraction-snap window tiling (move / expand / shrink) inspired by Rectangle",
+  "description": "Keyboard fraction-snap window tiling (move / expand / shrink) inspired by Rectangle — v7 alpha",
   "uuid": "tile-on-grid@hwaryong.com",
   "shell-version": [
     "45",
@@ -12,5 +12,5 @@
   ],
   "url": "https://github.com/dayliver/tile-on-grid",
   "settings-schema": "org.gnome.shell.extensions.tile-on-grid",
-  "version": 6
+  "version": 7
 }

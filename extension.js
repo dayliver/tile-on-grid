@@ -70,9 +70,256 @@ function formatAccel(accel) {
         .replace(/Primary/g, 'Ctrl');
 }
 
+/** Classify a 0–1 guide for stroke styling. */
+function guideFamily(frac) {
+    for (let k = 1; k <= 2; k++) {
+        if (Math.abs(frac - k / 3) < 0.02)
+            return 'third';
+    }
+    for (let k = 1; k <= 3; k++) {
+        if (Math.abs(frac - k / 4) < 0.02)
+            return 'quarter';
+    }
+    return 'other';
+}
+
+const GUIDE_STYLE = {
+    third: { color: 'rgba(120, 210, 255, 0.9)', dash: [10, 7] },
+    quarter: { color: 'rgba(255, 190, 90, 0.9)', dash: [6, 5] },
+    other: { color: 'rgba(200, 200, 200, 0.75)', dash: [4, 4] },
+};
+
+const DashGuide = GObject.registerClass(
+class DashGuide extends St.DrawingArea {
+    _init(vertical, family) {
+        super._init({
+            reactive: false,
+            can_focus: false,
+            request_mode: Clutter.RequestMode.CONTENT_SIZE,
+        });
+        this._vertical = vertical;
+        this._family = family;
+        this.connect('repaint', () => this._paint());
+    }
+
+    _paint() {
+        const cr = this.get_context();
+        const [w, h] = this.get_surface_size();
+        const style = GUIDE_STYLE[this._family] || GUIDE_STYLE.other;
+        const m = style.color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/);
+        if (!m) {
+            cr.$dispose();
+            return;
+        }
+        cr.setSourceRGBA(
+            Number(m[1]) / 255,
+            Number(m[2]) / 255,
+            Number(m[3]) / 255,
+            Number(m[4])
+        );
+        cr.setDash(style.dash, 0);
+        cr.setLineWidth(2);
+        if (this._vertical) {
+            cr.moveTo(w * 0.5, 0);
+            cr.lineTo(w * 0.5, h);
+        } else {
+            cr.moveTo(0, h * 0.5);
+            cr.lineTo(w, h * 0.5);
+        }
+        cr.stroke();
+        cr.$dispose();
+    }
+
+    vfunc_get_preferred_width(_forHeight) {
+        return this._vertical ? [2, 2] : [0, 0];
+    }
+
+    vfunc_get_preferred_height(_forWidth) {
+        return this._vertical ? [0, 0] : [2, 2];
+    }
+});
+
+class SnapGuidePreview {
+    constructor() {
+        this._root = null;
+        this._fadeTimeoutId = null;
+        this._removing = false;
+    }
+
+    destroy() {
+        this._cancelFade();
+        this._destroyRoot();
+    }
+
+    _cancelFade() {
+        if (this._fadeTimeoutId) {
+            GLib.Source.remove(this._fadeTimeoutId);
+            this._fadeTimeoutId = null;
+        }
+        if (this._root) {
+            this._root.remove_all_transitions?.();
+            this._root.opacity = 255;
+        }
+        this._removing = false;
+    }
+
+    _destroyRoot() {
+        if (!this._root)
+            return;
+        const root = this._root;
+        this._root = null;
+        try {
+            Main.layoutManager.removeChrome(root);
+        } catch (e) {
+            /* already removed */
+        }
+        root.destroy();
+    }
+
+    /**
+     * Show third/quarter guide lattice + highlight for the target fraction state.
+     * @param {object} area usable rect {x,y,width,height}
+     * @param {object} state {x,y,w,h} fractions
+     * @param {number} gap inner padding
+     * @param {number[]} hSteps
+     * @param {number[]} vSteps
+     */
+    show(area, state, gap, hSteps, vSteps) {
+        this._cancelFade();
+
+        if (!this._root) {
+            this._root = new St.Widget({
+                name: 'tile-on-grid-snap-guides',
+                reactive: false,
+                can_focus: false,
+                layout_manager: null,
+                opacity: 255,
+            });
+            Main.layoutManager.addTopChrome(this._root, {
+                affectsInputRegion: false,
+                trackFullscreen: true,
+            });
+        } else {
+            this._root.destroy_all_children();
+            this._root.opacity = 255;
+            this._root.show();
+        }
+
+        const root = this._root;
+        root.set_position(area.x, area.y);
+        root.set_size(area.width, area.height);
+
+        const vGuides = this._collectGuides(hSteps, true);
+        const hGuides = this._collectGuides(vSteps, false);
+
+        for (const g of vGuides) {
+            if (g.frac <= EPS || g.frac >= 1 - EPS)
+                continue;
+            const line = new DashGuide(true, g.family);
+            root.add_child(line);
+            const px = Math.round(g.frac * area.width);
+            line.set_position(px - 1, 0);
+            line.set_size(2, area.height);
+        }
+
+        for (const g of hGuides) {
+            if (g.frac <= EPS || g.frac >= 1 - EPS)
+                continue;
+            const line = new DashGuide(false, g.family);
+            root.add_child(line);
+            const py = Math.round(g.frac * area.height);
+            line.set_position(0, py - 1);
+            line.set_size(area.width, 2);
+        }
+
+        const leftGap = state.x > EPS ? gap / 2 : 0;
+        const rightGap = state.x + state.w < 1 - EPS ? gap / 2 : 0;
+        const topGap = state.y > EPS ? gap / 2 : 0;
+        const bottomGap = state.y + state.h < 1 - EPS ? gap / 2 : 0;
+
+        let hx = Math.round(state.x * area.width + leftGap);
+        let hy = Math.round(state.y * area.height + topGap);
+        let hw = Math.round(state.w * area.width - leftGap - rightGap);
+        let hh = Math.round(state.h * area.height - topGap - bottomGap);
+        if (Math.abs(state.x + state.w - 1) < EPS)
+            hw = area.width - hx;
+        if (Math.abs(state.y + state.h - 1) < EPS)
+            hh = area.height - hy;
+
+        const highlight = new St.Widget({
+            reactive: false,
+            style: `
+                background-color: rgba(120, 180, 255, 0.18);
+                border: 2px solid rgba(140, 200, 255, 0.85);
+                border-radius: 10px;
+            `,
+        });
+        root.add_child(highlight);
+        highlight.set_position(hx, hy);
+        highlight.set_size(Math.max(1, hw), Math.max(1, hh));
+    }
+
+    _collectGuides(steps, _horizontalAxis) {
+        // Always include full third + quarter lattices, plus any custom steps.
+        const map = new Map();
+        const add = (frac, family) => {
+            if (frac <= EPS || frac >= 1 - EPS)
+                return;
+            const key = Math.round(frac * 10000);
+            if (!map.has(key))
+                map.set(key, { frac, family });
+        };
+
+        for (const f of [1 / 3, 2 / 3])
+            add(f, 'third');
+        for (const f of [1 / 4, 1 / 2, 3 / 4])
+            add(f, 'quarter');
+
+        for (const s of steps || []) {
+            if (s <= EPS || s >= 1 - EPS)
+                continue;
+            const fam = guideFamily(s);
+            // Prefer third/quarter labels; don't overwrite third with other.
+            const key = Math.round(s * 10000);
+            if (!map.has(key) || fam !== 'other')
+                map.set(key, { frac: s, family: fam === 'other' && map.has(key) ? map.get(key).family : fam });
+        }
+
+        return [...map.values()].sort((a, b) => a.frac - b.frac);
+    }
+
+    /** After the window finishes moving, hold briefly then fade out. */
+    scheduleFadeOut(holdMs = 180, fadeMs = 380) {
+        this._cancelFade();
+        if (!this._root)
+            return;
+
+        this._root.opacity = 255;
+        this._fadeTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, holdMs, () => {
+            this._fadeTimeoutId = null;
+            const root = this._root;
+            if (!root)
+                return GLib.SOURCE_REMOVE;
+
+            this._removing = true;
+            root.ease({
+                opacity: 0,
+                duration: fadeMs,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                onComplete: () => {
+                    if (this._removing)
+                        this._destroyRoot();
+                },
+            });
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+}
+
 class WindowManager {
-    constructor(settings) {
+    constructor(settings, guidePreview = null) {
         this._settings = settings;
+        this._guidePreview = guidePreview;
         this._animId = null;
         this._settleId = null;
         this._windowStates = new WeakMap();
@@ -87,6 +334,8 @@ class WindowManager {
             GLib.Source.remove(this._settleId);
             this._settleId = null;
         }
+        this._guidePreview?.destroy();
+        this._guidePreview = null;
     }
 
     _hSteps() {
@@ -361,6 +610,8 @@ class WindowManager {
         const area = this._innerArea(workArea);
         const gap = this._settings.get_int('padding-inner');
 
+        this._guidePreview?.show(area, state, gap, this._hSteps(), this._vSteps());
+
         // Half-gap on edges that don't touch the usable area → full gap between adjacent tiles.
         const leftGap = state.x > EPS ? gap / 2 : 0;
         const rightGap = state.x + state.w < 1 - EPS ? gap / 2 : 0;
@@ -399,6 +650,7 @@ class WindowManager {
             } catch (e) {
                 /* window gone */
             }
+            this._guidePreview?.scheduleFadeOut(160, 400);
             return GLib.SOURCE_REMOVE;
         });
     }
@@ -574,7 +826,8 @@ class HelpOverlay extends St.Widget {
 export default class TileOnGrid extends Extension {
     enable() {
         this._settings = this.getSettings();
-        this._manager = new WindowManager(this._settings);
+        this._guidePreview = new SnapGuidePreview();
+        this._manager = new WindowManager(this._settings, this._guidePreview);
         this._overlay = null;
         this._grab = null;
         this._capturedEventId = 0;
@@ -604,6 +857,7 @@ export default class TileOnGrid extends Extension {
             this._manager.destroy();
             this._manager = null;
         }
+        this._guidePreview = null;
         this._settings = null;
     }
 
