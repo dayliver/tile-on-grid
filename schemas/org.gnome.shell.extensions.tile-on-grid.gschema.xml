@@ -17,7 +17,7 @@
     </key>
 
     <key name="toggle-grid-shortcut" type="as"><default><![CDATA[['<Super>g']]]></default>
-      <summary>Show shortcuts help overlay</summary>
+      <summary>Show shortcuts and quick settings overlay</summary>
     </key>
 
     <key name="move-left" type="as"><default><![CDATA[['<Super>Left']]]></default></key>

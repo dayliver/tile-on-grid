@@ -2,6 +2,21 @@ import Adw from 'gi://Adw';
 import Gdk from 'gi://Gdk';
 import Gtk from 'gi://Gtk';
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
+import {
+    ACTION_GROUPS,
+    FRACTION_OPTIONS,
+    KEY_SCHEMES,
+    MODIFIER_OPTIONS,
+    applyDirectionalScheme,
+    deselectFraction,
+    detectKeyScheme,
+    parseModifiers,
+    schemeLabel,
+    selectFraction,
+    selectedFromSteps,
+    stepsFromSelected,
+    toggleModifier,
+} from './settings-util.js';
 
 function acceleratorLabel(accel) {
     return accel || 'Disabled';
@@ -12,7 +27,10 @@ export default class TileOnGridPreferences extends ExtensionPreferences {
         const settings = this.getSettings('org.gnome.shell.extensions.tile-on-grid');
         window.set_default_size(560, 720);
 
-        const page = new Adw.PreferencesPage({ title: 'General' });
+        const page = new Adw.PreferencesPage({
+            title: 'General',
+            icon_name: 'preferences-system-symbolic',
+        });
         window.add(page);
 
         const groupGeneral = new Adw.PreferencesGroup({ title: 'Appearance & Behavior' });
@@ -49,75 +67,214 @@ export default class TileOnGridPreferences extends ExtensionPreferences {
 
         const groupSteps = new Adw.PreferencesGroup({
             title: 'Size Steps',
-            description: 'Comma-separated fractions of the work area (e.g. 1/4, 1/3, 0.5). Horizontal defaults suit most monitors; add finer steps on high-resolution displays.',
+            description: 'Pick denominators to include. Finer steps also enable coarser ones (e.g. 1/8 → 1/4 & 1/2). Full size is always available.',
         });
         page.add(groupSteps);
 
-        const addStepsRow = (key, title) => {
-            const row = new Adw.EntryRow({
-                title,
-                text: settings.get_strv(key).join(', '),
-            });
-            const commit = () => {
-                const parts = row.text.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
-                settings.set_strv(key, parts);
-            };
-            row.connect('apply', commit);
-            row.connect('entry-activated', commit);
-            // Adw.EntryRow may not always emit apply; also commit on focus leave via notify.
-            row.connect('notify::text', () => {
-                /* live edit kept in widget; committed on apply / activated */
-            });
-            const applyBtn = new Gtk.Button({
-                label: 'Apply',
-                valign: Gtk.Align.CENTER,
-                css_classes: ['suggested-action'],
-            });
-            applyBtn.connect('clicked', commit);
-            row.add_suffix(applyBtn);
-            groupSteps.add(row);
-        };
+        this._addFractionToggles(groupSteps, settings, 'horizontal-steps', 'Horizontal');
+        this._addFractionToggles(groupSteps, settings, 'vertical-steps', 'Vertical');
 
-        addStepsRow('horizontal-steps', 'Horizontal sizes');
-        addStepsRow('vertical-steps', 'Vertical sizes');
-
-        const pageKeys = new Adw.PreferencesPage({ title: 'Shortcuts' });
+        const pageKeys = new Adw.PreferencesPage({
+            title: 'Shortcuts',
+            icon_name: 'input-keyboard-symbolic',
+        });
         window.add(pageKeys);
 
-        const addShortcutGroup = (title, items) => {
-            const group = new Adw.PreferencesGroup({ title });
-            pageKeys.add(group);
-            for (const [id, label] of items)
-                this._addShortcutRow(group, settings, id, label);
+        const helpGroup = new Adw.PreferencesGroup({ title: 'Help' });
+        pageKeys.add(helpGroup);
+        this._addShortcutRow(helpGroup, settings, 'toggle-grid-shortcut', 'Show shortcuts / settings overlay');
+
+        for (const group of ACTION_GROUPS)
+            this._addCompactShortcutGroup(pageKeys, settings, group);
+    }
+
+    _addFractionToggles(group, settings, key, title) {
+        const row = new Adw.ActionRow({
+            title,
+            subtitle: settings.get_strv(key).join(', ') || '1',
+        });
+        const box = new Gtk.Box({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            spacing: 4,
+            valign: Gtk.Align.CENTER,
+            css_classes: ['linked'],
+        });
+
+        const buttons = new Map();
+        let syncing = false;
+
+        const readSelected = () => selectedFromSteps(settings.get_strv(key));
+
+        const syncButtons = selected => {
+            syncing = true;
+            for (const frac of FRACTION_OPTIONS)
+                buttons.get(frac).active = selected.includes(frac);
+            syncing = false;
         };
 
-        addShortcutGroup('Help', [
-            ['toggle-grid-shortcut', 'Show shortcuts help'],
-        ]);
-        addShortcutGroup('Move', [
-            ['move-left', 'Move left'],
-            ['move-right', 'Move right'],
-            ['move-up', 'Move up'],
-            ['move-down', 'Move down'],
-        ]);
-        addShortcutGroup('Expand', [
-            ['expand-left', 'Expand left'],
-            ['expand-right', 'Expand right'],
-            ['expand-up', 'Expand up'],
-            ['expand-down', 'Expand down'],
-        ]);
-        addShortcutGroup('Shrink', [
-            ['shrink-left', 'Shrink from left'],
-            ['shrink-right', 'Shrink from right'],
-            ['shrink-up', 'Shrink from top'],
-            ['shrink-down', 'Shrink from bottom'],
-        ]);
-        addShortcutGroup('Focus', [
-            ['focus-left', 'Focus left'],
-            ['focus-right', 'Focus right'],
-            ['focus-up', 'Focus up'],
-            ['focus-down', 'Focus down'],
-        ]);
+        const writeSelected = selected => {
+            settings.set_strv(key, stepsFromSelected(selected));
+            syncButtons(selected);
+            row.subtitle = settings.get_strv(key).join(', ') || '1';
+        };
+
+        for (const frac of FRACTION_OPTIONS) {
+            const btn = new Gtk.ToggleButton({
+                label: frac,
+                valign: Gtk.Align.CENTER,
+            });
+            btn.connect('toggled', () => {
+                if (syncing)
+                    return;
+                let selected = readSelected();
+                if (btn.active)
+                    selected = selectFraction(selected, frac);
+                else
+                    selected = deselectFraction(selected, frac);
+                writeSelected(selected);
+            });
+            buttons.set(frac, btn);
+            box.append(btn);
+        }
+
+        syncButtons(readSelected());
+
+        settings.connect(`changed::${key}`, () => {
+            if (syncing)
+                return;
+            syncButtons(readSelected());
+            row.subtitle = settings.get_strv(key).join(', ') || '1';
+        });
+
+        row.add_suffix(box);
+        group.add(row);
+    }
+
+    _addCompactShortcutGroup(page, settings, actionGroup) {
+        const { title, keys, defaultMods } = actionGroup;
+        const group = new Adw.PreferencesGroup({
+            title,
+            description: 'Choose up to 3 modifiers, then Arrow keys or Numpad. Manual expands per-direction bindings.',
+        });
+        page.add(group);
+
+        let mods = parseModifiers(settings.get_strv(keys[0])[0] || '') ;
+        if (!mods.length)
+            mods = defaultMods.slice();
+        let scheme = detectKeyScheme(settings, keys);
+
+        const modBox = new Gtk.Box({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            spacing: 4,
+            valign: Gtk.Align.CENTER,
+            css_classes: ['linked'],
+        });
+        const modButtons = new Map();
+        let syncingMods = false;
+
+        const applyScheme = () => {
+            if (scheme === 'manual')
+                return;
+            applyDirectionalScheme(settings, keys, mods, scheme);
+        };
+
+        for (const name of MODIFIER_OPTIONS) {
+            const btn = new Gtk.ToggleButton({
+                label: name === 'Control' ? 'Ctrl' : name,
+                valign: Gtk.Align.CENTER,
+                active: mods.includes(name),
+            });
+            btn.connect('toggled', () => {
+                if (syncingMods)
+                    return;
+                const next = toggleModifier(mods, name, 3);
+                // Reject 4th modifier: revert button
+                if (btn.active && !next.includes(name)) {
+                    syncingMods = true;
+                    btn.active = false;
+                    syncingMods = false;
+                    return;
+                }
+                mods = next;
+                syncingMods = true;
+                for (const m of MODIFIER_OPTIONS)
+                    modButtons.get(m).active = mods.includes(m);
+                syncingMods = false;
+                applyScheme();
+            });
+            modButtons.set(name, btn);
+            modBox.append(btn);
+        }
+
+        const modRow = new Adw.ActionRow({ title: 'Modifiers' });
+        modRow.add_suffix(modBox);
+        group.add(modRow);
+
+        const manualExpander = new Adw.ExpanderRow({
+            title: 'Per-direction shortcuts',
+            subtitle: 'Shown when Keys is Manual',
+            expanded: scheme === 'manual',
+            visible: scheme === 'manual',
+        });
+        const refreshManualVisibility = () => {
+            const isManual = scheme === 'manual';
+            manualExpander.visible = isManual;
+            manualExpander.expanded = isManual;
+        };
+
+        const keyBox = new Gtk.Box({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            spacing: 4,
+            valign: Gtk.Align.CENTER,
+            css_classes: ['linked'],
+        });
+        const keyButtons = new Map();
+        let syncingKeys = false;
+
+        const syncKeyButtons = () => {
+            syncingKeys = true;
+            for (const s of KEY_SCHEMES)
+                keyButtons.get(s).active = scheme === s;
+            syncingKeys = false;
+        };
+
+        for (const s of KEY_SCHEMES) {
+            const btn = new Gtk.ToggleButton({
+                label: schemeLabel(s),
+                valign: Gtk.Align.CENTER,
+                active: scheme === s,
+            });
+            btn.connect('toggled', () => {
+                if (syncingKeys)
+                    return;
+                if (btn.active) {
+                    scheme = s;
+                    syncKeyButtons();
+                    refreshManualVisibility();
+                    applyScheme();
+                } else if (scheme === s) {
+                    // Keep exactly one scheme selected.
+                    syncingKeys = true;
+                    btn.active = true;
+                    syncingKeys = false;
+                }
+            });
+            keyButtons.set(s, btn);
+            keyBox.append(btn);
+        }
+
+        const schemeRow = new Adw.ActionRow({ title: 'Keys' });
+        schemeRow.add_suffix(keyBox);
+        group.add(schemeRow);
+
+        const dirLabels = ['Left', 'Right', 'Up', 'Down'];
+        keys.forEach((id, i) => {
+            this._addShortcutRow(manualExpander, settings, id, dirLabels[i]);
+        });
+        group.add(manualExpander);
+
+        refreshManualVisibility();
+        // Do not rewrite bindings on open; only apply when the user changes controls.
     }
 
     _addShortcutRow(group, settings, id, title) {
@@ -181,6 +338,9 @@ export default class TileOnGridPreferences extends ExtensionPreferences {
 
         row.add_suffix(button);
         row.activatable_widget = button;
-        group.add(row);
+        if (typeof group.add_row === 'function')
+            group.add_row(row);
+        else
+            group.add(row);
     }
 }
